@@ -146,6 +146,7 @@ import { useWorktimeStore } from '@/store/worktime'
 import { useUserStore } from '@/store/user'
 import { ElMessage } from 'element-plus'
 import { Printer, Document } from '@element-plus/icons-vue'
+import { getPayrollById, generatePayroll as apiGeneratePayroll, getPayrolls, exportPayroll } from '@/api/payroll'
 
 const worktimeStore = useWorktimeStore()
 const userStore = useUserStore()
@@ -169,7 +170,8 @@ const payrollData = reactive({
   deductionItems: [],
   totalIncome: 0,
   totalDeduction: 0,
-  netPay: 0
+  netPay: 0,
+  id: null
 })
 
 // 历史工资单
@@ -181,7 +183,7 @@ const hasPayrollData = computed(() => {
 })
 
 // 生成工资单
-const generatePayroll = () => {
+const generatePayroll = async () => {
   if (!selectedMonth.value) {
     ElMessage.warning('请选择月份')
     return
@@ -189,23 +191,75 @@ const generatePayroll = () => {
   
   loading.value = true
   
-  // 模拟异步操作
-  setTimeout(() => {
-    try {
-      // 这里应该是实际的工资单生成逻辑
-      // 为了演示，使用模拟数据
+  try {
+    // 解析年月
+    const [year, month] = selectedMonth.value.split('-')
+    
+    // 调用API生成工资单
+    const data = await apiGeneratePayroll(year, month)
+    
+    // 格式化月份显示
+    payrollData.month = `${year}年${month}月`
+    
+    // 更新工资单数据
+    payrollData.basicInfo = data.basicInfo
+    payrollData.incomeItems = data.incomeItems
+    payrollData.deductionItems = data.deductionItems
+    payrollData.totalIncome = data.totalIncome
+    payrollData.totalDeduction = data.totalDeduction
+    payrollData.netPay = data.netPay
+    payrollData.id = data.id
+    
+    // 加载历史工资单
+    await fetchPayrollHistory()
+    
+    ElMessage.success('工资单生成成功')
+  } catch (error) {
+    console.error('获取工资单数据失败:', error)
+    ElMessage.error('工资单生成失败：' + (error.response?.data?.message || error.message || '未知错误'))
+    
+    // 如果是开发环境，使用模拟数据
+    if (process.env.NODE_ENV === 'development') {
       generateMockPayrollData()
-      
-      ElMessage.success('工资单生成成功')
-    } catch (error) {
-      ElMessage.error('工资单生成失败：' + error.message)
-    } finally {
-      loading.value = false
+      ElMessage.info('使用模拟数据进行展示')
     }
-  }, 1000)
+  } finally {
+    loading.value = false
+  }
 }
 
-// 生成模拟工资单数据
+// 获取历史工资单
+const fetchPayrollHistory = async () => {
+  try {
+    const data = await getPayrolls()
+    payrollHistory.value = data.map(item => ({
+      month: item.month,
+      totalIncome: item.totalIncome,
+      totalDeduction: item.totalDeduction,
+      netPay: item.netPay,
+      id: item.id
+    }))
+    
+    // 按月份降序排序
+    payrollHistory.value.sort((a, b) => {
+      return b.month.localeCompare(a.month)
+    })
+  } catch (error) {
+    console.error('获取历史工资单失败:', error)
+    ElMessage.error('获取历史工资单失败：' + (error.response?.data?.message || error.message || '未知错误'))
+    
+    // 如果是开发环境，使用模拟数据
+    if (process.env.NODE_ENV === 'development') {
+      payrollHistory.value = [
+        { month: '2023年02月', totalIncome: 9000, totalDeduction: 1000, netPay: 8000, id: 1 },
+        { month: '2023年01月', totalIncome: 8500, totalDeduction: 950, netPay: 7550, id: 2 },
+        { month: '2022年12月', totalIncome: 9500, totalDeduction: 1050, netPay: 8450, id: 3 }
+      ]
+    }
+  }
+}
+
+// 生成模拟工资单数据 (仅用于开发环境)
 const generateMockPayrollData = () => {
   // 格式化月份显示
   const [year, month] = selectedMonth.value.split('-')
@@ -246,14 +300,16 @@ const generateMockPayrollData = () => {
       month: payrollData.month,
       totalIncome: payrollData.totalIncome,
       totalDeduction: payrollData.totalDeduction,
-      netPay: payrollData.netPay
+      netPay: payrollData.netPay,
+      id: payrollData.id
     }
   } else {
     payrollHistory.value.push({
       month: payrollData.month,
       totalIncome: payrollData.totalIncome,
       totalDeduction: payrollData.totalDeduction,
-      netPay: payrollData.netPay
+      netPay: payrollData.netPay,
+      id: payrollData.id
     })
   }
   
@@ -275,12 +331,38 @@ const printPayroll = () => {
 }
 
 // 导出PDF
-const exportPDF = () => {
-  ElMessage.success('PDF导出功能将在后续版本中实现')
+const exportPDF = async () => {
+  if (!payrollData.id) {
+    ElMessage.warning('无法导出，请先生成工资单')
+    return
+  }
+  
+  try {
+    // 调用导出API
+    const blob = await exportPayroll(payrollData.id)
+    
+    // 创建下载链接
+    const url = window.URL.createObjectURL(new Blob([blob]))
+    const link = document.createElement('a')
+    link.href = url
+    
+    // 设置文件名
+    const filename = `工资单_${payrollData.month}.pdf`
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    
+    ElMessage.success('PDF导出成功')
+  } catch (error) {
+    console.error('导出PDF失败:', error)
+    ElMessage.error('导出PDF失败：' + (error.response?.data?.message || error.message || '未知错误'))
+    ElMessage.info('PDF导出功能将在后续版本中实现')
+  }
 }
 
 // 组件挂载后初始化
-onMounted(() => {
+onMounted(async () => {
   // 设置当前月份
   const now = new Date()
   const year = now.getFullYear()
@@ -288,13 +370,7 @@ onMounted(() => {
   selectedMonth.value = `${year}-${month}`
   
   // 加载历史工资单
-  // 这里应该是实际的加载逻辑
-  // 为了演示，使用模拟数据
-  payrollHistory.value = [
-    { month: '2023年02月', totalIncome: 9000, totalDeduction: 1000, netPay: 8000 },
-    { month: '2023年01月', totalIncome: 8500, totalDeduction: 950, netPay: 7550 },
-    { month: '2022年12月', totalIncome: 9500, totalDeduction: 1050, netPay: 8450 }
-  ]
+  await fetchPayrollHistory()
 })
 </script>
 

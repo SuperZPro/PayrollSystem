@@ -238,6 +238,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useWorktimeStore } from '@/store/worktime'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, InfoFilled } from '@element-plus/icons-vue'
+import { getCalendarData, createWorktimeRecord, updateWorktimeRecord, getMonthStats } from '@/api/worktime'
+import { getCourseTypes } from '@/api/courseType'
 
 const worktimeStore = useWorktimeStore()
 
@@ -407,6 +409,53 @@ const calculatedIncome = computed(() => {
   return Math.round(baseRate * recordForm.hours * coefficient + bonus)
 })
 
+// 获取日历数据
+const fetchCalendarData = async () => {
+  try {
+    const year = currentYear.value
+    const month = currentMonth.value + 1
+    const response = await getCalendarData(year, month)
+    
+    // 处理日历数据，更新calendarDays
+    // 这里需要根据后端返回的数据结构进行适配
+    // 暂时保留原有逻辑，等后端API实现后再调整
+  } catch (error) {
+    console.error('获取日历数据失败:', error)
+    ElMessage.error('获取日历数据失败')
+  }
+}
+
+// 获取课程类型
+const fetchCourseTypes = async () => {
+  try {
+    const response = await getCourseTypes()
+    
+    // 处理课程类型数据，按组分类
+    const groups = {}
+    
+    response.forEach(type => {
+      if (!groups[type.groupName]) {
+        groups[type.groupName] = {
+          label: type.groupName,
+          options: []
+        }
+      }
+      
+      groups[type.groupName].options.push({
+        id: type.id,
+        name: type.name,
+        coefficient: type.coefficient
+      })
+    })
+    
+    // 更新课程类型分组
+    // 暂时保留原有逻辑，等后端API实现后再调整
+  } catch (error) {
+    console.error('获取课程类型失败:', error)
+    ElMessage.error('获取课程类型失败')
+  }
+}
+
 // 上个月
 const prevMonth = () => {
   if (currentMonth.value === 0) {
@@ -416,7 +465,8 @@ const prevMonth = () => {
     currentMonth.value--
   }
   
-  calculateMonthSummary()
+  fetchCalendarData()
+  fetchMonthSummary()
 }
 
 // 下个月
@@ -428,7 +478,8 @@ const nextMonth = () => {
     currentMonth.value++
   }
   
-  calculateMonthSummary()
+  fetchCalendarData()
+  fetchMonthSummary()
 }
 
 // 判断是否是今天
@@ -534,44 +585,48 @@ const submitRecord = () => {
 }
 
 // 保存记录
-const saveRecord = () => {
+const saveRecord = async () => {
   try {
     // 设置收入
     recordForm.income = Number(calculatedIncome.value)
     
     if (isEdit.value) {
       // 更新记录
-      worktimeStore.updateWorktimeRecord({ ...recordForm })
+      await updateWorktimeRecord(recordForm.id, { ...recordForm })
       ElMessage.success('工时记录更新成功')
     } else {
       // 添加记录
-      worktimeStore.addWorktimeRecord({ ...recordForm })
+      await createWorktimeRecord({ ...recordForm })
       ElMessage.success('工时记录添加成功')
     }
     
     dialogVisible.value = false
-    calculateMonthSummary()
+    fetchCalendarData()
+    fetchMonthSummary()
   } catch (error) {
-    ElMessage.error('操作失败：' + error.message)
+    console.error('保存记录失败:', error)
+    ElMessage.error('操作失败：' + (error.message || '未知错误'))
   } finally {
     submitting.value = false
   }
 }
 
-// 计算本月汇总数据
-const calculateMonthSummary = () => {
-  const yearMonth = `${currentYear.value}-${String(currentMonth.value + 1).padStart(2, '0')}`
-  const records = worktimeStore.getRecordsByMonth(yearMonth)
-  
-  if (records.length > 0) {
-    const totalHours = records.reduce((sum, record) => sum + record.hours, 0)
-    const totalIncome = records.reduce((sum, record) => sum + record.income, 0)
+// 获取本月汇总数据
+const fetchMonthSummary = async () => {
+  try {
+    const year = currentYear.value
+    const month = currentMonth.value + 1
+    const response = await getMonthStats(year, month)
     
-    monthSummary.totalHours = totalHours.toFixed(1)
-    monthSummary.totalIncome = totalIncome.toFixed(0)
-    monthSummary.averageRate = totalHours > 0 ? (totalIncome / totalHours).toFixed(0) : 0
-    monthSummary.recordDays = records.length
-  } else {
+    monthSummary.totalHours = response.totalHours
+    monthSummary.totalIncome = response.totalIncome
+    monthSummary.averageRate = response.averageRate
+    monthSummary.recordDays = response.recordDays
+  } catch (error) {
+    console.error('获取月度统计数据失败:', error)
+    ElMessage.error('获取月度统计数据失败')
+    
+    // 重置汇总数据
     monthSummary.totalHours = 0
     monthSummary.totalIncome = 0
     monthSummary.averageRate = 0
@@ -581,7 +636,9 @@ const calculateMonthSummary = () => {
 
 // 组件挂载后初始化
 onMounted(() => {
-  calculateMonthSummary()
+  fetchCourseTypes()
+  fetchCalendarData()
+  fetchMonthSummary()
 })
 </script>
 

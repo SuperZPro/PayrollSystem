@@ -177,6 +177,7 @@ import {
   LegendComponent 
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { getIncomeReport, exportReport } from '@/api/report'
 
 // 注册必要的组件
 echarts.use([
@@ -339,7 +340,7 @@ const resetFilter = () => {
 }
 
 // 生成报表
-const generateReport = () => {
+const generateReport = async () => {
   if (!filterForm.dateRange || filterForm.dateRange.length !== 2) {
     ElMessage.warning('请选择时间范围')
     return
@@ -347,36 +348,92 @@ const generateReport = () => {
   
   loading.value = true
   
-  // 模拟异步操作
-  setTimeout(() => {
-    try {
-      // 这里应该是实际的报表生成逻辑
-      // 为了演示，使用模拟数据
-      generateMockReportData()
-      
-      // 初始化图表
-      initCharts()
-      
-      ElMessage.success('报表生成成功')
-    } catch (error) {
-      ElMessage.error('报表生成失败：' + error.message)
-    } finally {
-      loading.value = false
+  try {
+    // 构建API请求参数
+    const params = {
+      startDate: filterForm.dateRange[0],
+      endDate: filterForm.dateRange[1],
+      reportType: filterForm.reportType,
+      courseTypeId: filterForm.courseTypeId || undefined
     }
-  }, 1000)
+    
+    // 调用API获取报表数据
+    const data = await getIncomeReport(params)
+    
+    // 更新报表数据
+    reportData.summary = data.summary
+    reportData.details = data.details
+    
+    // 更新趋势数据
+    reportData.trendData.dates = data.trendData.dates
+    reportData.trendData.hours = data.trendData.hours
+    reportData.trendData.incomes = data.trendData.incomes
+    
+    // 更新分布数据
+    reportData.distributionData = data.distributionData
+    
+    // 更新工作日/周末数据
+    reportData.weekdayData = data.weekdayData
+    
+    // 初始化图表
+    initCharts()
+    
+    ElMessage.success('报表生成成功')
+  } catch (error) {
+    console.error('获取报表数据失败:', error)
+    ElMessage.error('报表生成失败：' + (error.response?.data?.message || error.message || '未知错误'))
+    
+    // 如果是开发环境，使用模拟数据
+    if (process.env.NODE_ENV === 'development') {
+      generateMockReportData()
+      initCharts()
+      ElMessage.info('使用模拟数据进行展示')
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
 // 导出报表
-const exportReport = () => {
+const exportReport = async () => {
   if (!hasReportData.value) {
     ElMessage.warning('请先生成报表')
     return
   }
   
-  ElMessage.success('报表导出功能将在后续版本中实现')
+  try {
+    // 构建API请求参数
+    const params = {
+      startDate: filterForm.dateRange[0],
+      endDate: filterForm.dateRange[1],
+      reportType: filterForm.reportType,
+      courseTypeId: filterForm.courseTypeId || undefined,
+      exportType: 'excel'
+    }
+    
+    // 调用导出API
+    const blob = await exportReport(params)
+    
+    // 创建下载链接
+    const url = window.URL.createObjectURL(new Blob([blob]))
+    const link = document.createElement('a')
+    link.href = url
+    
+    // 设置文件名
+    const filename = `收入报表_${filterForm.dateRange[0]}_${filterForm.dateRange[1]}.xlsx`
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    
+    ElMessage.success('报表导出成功')
+  } catch (error) {
+    console.error('导出报表失败:', error)
+    ElMessage.error('报表导出失败：' + (error.response?.data?.message || error.message || '未知错误'))
+  }
 }
 
-// 生成模拟报表数据
+// 生成模拟报表数据 (仅用于开发环境)
 const generateMockReportData = () => {
   // 模拟明细数据
   reportData.details = [
@@ -523,40 +580,27 @@ const initDistributionChart = () => {
     },
     tooltip: {
       trigger: 'item',
-      formatter: '{a} <br/>{b}: {c}元 ({d}%)'
+      formatter: '{a} <br/>{b} : {c} ({d}%)'
     },
     legend: {
       orient: 'vertical',
-      left: 10,
-      top: 'center',
+      left: 'left',
       data: reportData.distributionData.map(item => item.name)
     },
     series: [
       {
-        name: '课程收入',
+        name: '收入分布',
         type: 'pie',
-        radius: ['50%', '70%'],
-        avoidLabelOverlap: false,
-        itemStyle: {
-          borderRadius: 10,
-          borderColor: '#fff',
-          borderWidth: 2
-        },
-        label: {
-          show: false,
-          position: 'center'
-        },
+        radius: '55%',
+        center: ['50%', '60%'],
+        data: reportData.distributionData,
         emphasis: {
-          label: {
-            show: true,
-            fontSize: '18',
-            fontWeight: 'bold'
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
           }
-        },
-        labelLine: {
-          show: false
-        },
-        data: reportData.distributionData
+        }
       }
     ]
   }
@@ -564,7 +608,7 @@ const initDistributionChart = () => {
   distributionChart.setOption(option)
 }
 
-// 初始化工作日/周末对比图表
+// 初始化工作日/周末图表
 const initWeekdayChart = () => {
   if (weekdayChart) {
     weekdayChart.dispose()
@@ -574,8 +618,7 @@ const initWeekdayChart = () => {
   
   const option = {
     title: {
-      text: '工作日/周末对比',
-      left: 'center'
+      text: '工作日/周末收入对比'
     },
     tooltip: {
       trigger: 'axis',
@@ -584,52 +627,57 @@ const initWeekdayChart = () => {
       }
     },
     legend: {
-      data: ['工作日', '周末'],
-      top: 'bottom'
+      data: ['工时(小时)', '收入(元)', '平均时薪(元/时)']
     },
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '10%',
+      bottom: '3%',
       containLabel: true
     },
     xAxis: {
-      type: 'value'
-    },
-    yAxis: {
       type: 'category',
-      data: ['工时(小时)', '收入(元)', '平均时薪(元/时)']
+      data: ['工作日', '周末']
     },
+    yAxis: [
+      {
+        type: 'value',
+        name: '工时/收入',
+        axisLabel: {
+          formatter: '{value}'
+        }
+      },
+      {
+        type: 'value',
+        name: '平均时薪',
+        axisLabel: {
+          formatter: '{value}'
+        }
+      }
+    ],
     series: [
       {
-        name: '工作日',
+        name: '工时(小时)',
         type: 'bar',
-        stack: 'total',
-        label: {
-          show: true
-        },
-        emphasis: {
-          focus: 'series'
-        },
         data: [
           reportData.weekdayData.weekday.hours,
-          reportData.weekdayData.weekday.income,
-          reportData.weekdayData.weekday.averageRate
+          reportData.weekdayData.weekend.hours
         ]
       },
       {
-        name: '周末',
+        name: '收入(元)',
         type: 'bar',
-        stack: 'total',
-        label: {
-          show: true
-        },
-        emphasis: {
-          focus: 'series'
-        },
         data: [
-          reportData.weekdayData.weekend.hours,
-          reportData.weekdayData.weekend.income,
+          reportData.weekdayData.weekday.income,
+          reportData.weekdayData.weekend.income
+        ]
+      },
+      {
+        name: '平均时薪(元/时)',
+        type: 'line',
+        yAxisIndex: 1,
+        data: [
+          reportData.weekdayData.weekday.averageRate,
           reportData.weekdayData.weekend.averageRate
         ]
       }
@@ -639,40 +687,60 @@ const initWeekdayChart = () => {
   weekdayChart.setOption(option)
 }
 
-// 窗口大小变化时重新调整图表大小
+// 监听窗口大小变化，重绘图表
 const handleResize = () => {
-  trendChart && trendChart.resize()
-  distributionChart && distributionChart.resize()
-  weekdayChart && weekdayChart.resize()
+  if (trendChart) {
+    trendChart.resize()
+  }
+  if (distributionChart) {
+    distributionChart.resize()
+  }
+  if (weekdayChart) {
+    weekdayChart.resize()
+  }
 }
 
-// 组件挂载后初始化
+// 组件挂载时
 onMounted(() => {
-  // 监听窗口大小变化
   window.addEventListener('resize', handleResize)
+  
+  // 加载课程类型
+  if (worktimeStore.courseTypes.length === 0) {
+    worktimeStore.fetchCourseTypes()
+  }
 })
 
-// 组件卸载前清理
+// 组件卸载时
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
-  trendChart && trendChart.dispose()
-  distributionChart && distributionChart.dispose()
-  weekdayChart && weekdayChart.dispose()
+  
+  if (trendChart) {
+    trendChart.dispose()
+    trendChart = null
+  }
+  
+  if (distributionChart) {
+    distributionChart.dispose()
+    distributionChart = null
+  }
+  
+  if (weekdayChart) {
+    weekdayChart.dispose()
+    weekdayChart = null
+  }
 })
 
-// 监听标签页变化
-watch(activeTab, () => {
-  if (hasReportData.value) {
-    nextTick(() => {
-      if (activeTab.value === 'trend' && trendChartRef.value) {
-        initTrendChart()
-      } else if (activeTab.value === 'distribution' && distributionChartRef.value) {
-        initDistributionChart()
-      } else if (activeTab.value === 'weekday' && weekdayChartRef.value) {
-        initWeekdayChart()
-      }
-    })
-  }
+// 监听标签页变化，重绘当前标签页的图表
+watch(activeTab, (newValue) => {
+  nextTick(() => {
+    if (newValue === 'trend' && trendChart) {
+      trendChart.resize()
+    } else if (newValue === 'distribution' && distributionChart) {
+      distributionChart.resize()
+    } else if (newValue === 'weekday' && weekdayChart) {
+      weekdayChart.resize()
+    }
+  })
 })
 </script>
 

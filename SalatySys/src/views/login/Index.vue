@@ -103,30 +103,17 @@ const handleLogin = () => {
     
     loading.value = true
     
-    // 模拟登录请求
-    setTimeout(() => {
-      // 这里应该是实际的登录API调用
-      if (loginForm.username === 'admin' && loginForm.password === '123456') {
-        // 登录成功
-        const token = 'mock-token-' + Date.now()
-        const userInfo = {
-          name: '管理员',
-          avatar: '',
-          role: 'admin'
-        }
-        
-        userStore.setToken(token)
-        userStore.setUserInfo(userInfo)
-        
-        ElMessage.success('登录成功')
-        router.push('/')
-      } else {
-        // 登录失败
-        ElMessage.error('用户名或密码错误')
-      }
-      
+    userStore.login({
+      username: loginForm.username,
+      password: loginForm.password,
+      remember: loginForm.remember
+    }).then(() => {
+      router.push('/')
+    }).catch(error => {
+      console.error('登录失败:', error)
+    }).finally(() => {
       loading.value = false
-    }, 1000)
+    })
   })
 }
 </script>
